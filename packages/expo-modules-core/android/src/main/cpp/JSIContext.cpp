@@ -5,6 +5,7 @@
 #include "ExpoModulesHostObject.h"
 #include "JavaReferencesCache.h"
 #include "JSReferencesCache.h"
+#include "JSIUtils.h"
 #include "SharedObject.h"
 #include "SharedRef.h"
 #include "NativeModule.h"
@@ -30,6 +31,8 @@ void JSIContext::registerNatives() {
                    makeNativeMethod("drainJSEventLoop", JSIContext::drainJSEventLoop),
                    makeNativeMethod("setNativeStateForSharedObject",
                                     JSIContext::jniSetNativeStateForSharedObject),
+                   makeNativeMethod("installModuleClasses",
+                                    JSIContext::installModuleClasses),
                  });
 }
 
@@ -236,7 +239,84 @@ jni::local_ref<JavaScriptObject::javaobject> JSIContext::getJavascriptClass(
   return method(javaPart_, std::move(native));
 }
 
+void JSIContext::installModuleClasses(
+  jni::alias_ref<jni::HybridClass<JSDecoratorsBridgingObject>::javaobject> classesDecorator
+) {
+  auto &runtime = runtimeHolder->get();
+
+  // Apply all decorators (only classDecorator has content) to install classes
+  // in the worklet runtime. This populates the classRegistry so prototypes
+  // can be looked up later by __resolveInWorklet.
+  // Store them in moduleClassDecorators so the MethodMetadata shared_ptrs stay alive —
+  // the prototype sync functions capture weak_from_this() which must remain valid.
+  moduleClassDecorators = classesDecorator->cthis()->bridge();
+  jsi::Object tempObj(runtime);
+  for (auto &decorator: moduleClassDecorators) {
+    decorator->decorate(runtime, tempObj);
+  }
+
+  // Get global.expo.SharedObject to install __resolveInWorklet on it
+  auto expoObj = runtime.global().getPropertyAsObject(runtime, "expo");
+  auto sharedObjectClass = expoObj.getPropertyAsObject(runtime, "SharedObject");
+
+  // Capture this JSIContext for use in the lambda.
+  // The lambda lifetime is bounded by the worklet runtime, which holds this JSIContext.
+  auto *self = this;
+
+  auto resolveInWorklet = jsi::Function::createFromHostFunction(
+    runtime,
+    jsi::PropNameID::forAscii(runtime, "__resolveInWorklet"),
+    1,
+    [self](
+      jsi::Runtime &rt,
+      const jsi::Value &,
+      const jsi::Value *args,
+      size_t
+    ) -> jsi::Value {
+      int objectId = static_cast<int>(args[0].asNumber());
+
+      // Call back to Kotlin to get the native SharedObject's Java class
+      // from the main runtime's SharedObjectRegistry.
+      const static auto method = expo::JSIContext::javaClassLocal()
+        ->getMethod<jni::local_ref<jclass>(int)>("getNativeSharedObjectClass");
+      auto nativeClass = method(self->javaPart_, objectId);
+      if (!nativeClass) {
+        return jsi::Value::undefined();
+      }
+
+      // Look up the JS class from this (worklet) runtime's classRegistry
+      auto jsClassObj = self->getJavascriptClass(std::move(nativeClass));
+      if (!jsClassObj) {
+        return jsi::Value::undefined();
+      }
+
+      // Get the class prototype
+      auto jsClass = jsClassObj->cthis()->get();
+      auto proto = jsClass->getProperty(rt, "prototype");
+      if (!proto.isObject()) {
+        return jsi::Value::undefined();
+      }
+
+      // Create instance with prototype using the existing utility
+      auto protoObj = proto.asObject(rt);
+      auto instance = common::createObjectWithPrototype(rt, &protoObj);
+
+      // Define __expo_shared_object_id__ as an own data property.
+      // Must use defineProperty (not setProperty) because the SharedObject
+      // prototype has a getter-only accessor for this name.
+      jsi::Object descriptor = JavaScriptObject::preparePropertyDescriptor(rt, 0);
+      descriptor.setProperty(rt, "value", objectId);
+      common::defineProperty(rt, &instance, "__expo_shared_object_id__", std::move(descriptor));
+
+      return jsi::Value(rt, std::move(instance));
+    }
+  );
+
+  sharedObjectClass.setProperty(runtime, "__resolveInWorklet", std::move(resolveInWorklet));
+}
+
 void JSIContext::prepareForDeallocation() noexcept {
+  moduleClassDecorators.clear();
   jsRegistry.reset();
   if (runtimeHolder) {
     unbindJSIContext(runtimeHolder->get());

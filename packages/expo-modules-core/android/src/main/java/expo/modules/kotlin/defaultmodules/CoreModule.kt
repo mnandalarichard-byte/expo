@@ -6,6 +6,7 @@ import com.facebook.react.ReactActivity
 import expo.modules.BuildConfig
 import expo.modules.kotlin.events.normalizeEventName
 import expo.modules.kotlin.exception.Exceptions
+import expo.modules.kotlin.jni.decorators.JSDecoratorsBridgingObject
 import expo.modules.kotlin.modules.DEFAULT_MODULE_VIEW
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -118,6 +119,17 @@ class CoreModule : Module() {
       runBlocking {
         withContext(Dispatchers.Main) {
           appContext.uiRuntime.install(runtimePointer)
+
+          // Export module class prototypes (e.g. ObservableState with getValue/setValue)
+          // to the worklet runtime and install __resolveInWorklet on SharedObject.
+          val uiRuntime = appContext.uiRuntime
+          val classesDecorator = JSDecoratorsBridgingObject(uiRuntime.deallocator)
+          with(classesDecorator) {
+            for (holder in appContext.registry) {
+              holder.definition.classData.exportClasses(appContext, uiRuntime)
+            }
+          }
+          uiRuntime.jsiContext.installModuleClasses(classesDecorator)
         }
       }
     }

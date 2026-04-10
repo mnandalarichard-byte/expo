@@ -1,24 +1,77 @@
----
-title: app.json / app.config.js
-description: A reference of available properties in Expo app config.
-maxHeadingDepth: 5
----
+import React, { useState } from 'react';
+import { View, Text, TextInput, Button, FlatList, StyleSheet, ScrollView } from 'react-native';
 
-import { BookOpen02Icon } from '@expo/styleguide-icons/outline/BookOpen02Icon';
+export default function App() {
+  const [product, setProduct] = useState('');
+  const [qty, setQty] = useState('');
+  const [price, setPrice] = useState('');
 
-import schema from '~/public/static/schemas/v54.0.0/app-config-schema.json';
-import AppConfigSchemaTable from '~/ui/components/AppConfigSchemaTable';
-import { BoxLink } from '~/ui/components/BoxLink';
+  const [stockName, setStockName] = useState('');
+  const [stockQty, setStockQty] = useState('');
 
-The following is a list of properties that are available for you under the `"expo"` key in **app.json** or **app.config.json**. These properties can be passed to the top level object of **app.config.js** or **app.config.ts**.
+  const [sales, setSales] = useState([]);
+  const [stock, setStock] = useState([]);
 
-<BoxLink
-  title="Configuration with app config"
-  description="For information on app configuration, the differences between various app config files, and how to use them dynamically."
-  href="/workflow/configuration/"
-  Icon={BookOpen02Icon}
-/>
+  const addSale = () => {
+    if (!product || !qty || !price) return;
+    const total = parseFloat(qty) * parseFloat(price);
+    setSales([...sales, { product, qty, price, total }]);
+    setProduct('');
+    setQty('');
+    setPrice('');
+  };
 
-## Properties
+  const addStock = () => {
+    if (!stockName || !stockQty) return;
+    setStock([...stock, { name: stockName, qty: stockQty }]);
+    setStockName('');
+    setStockQty('');
+  };
 
-<AppConfigSchemaTable schema={schema} />
+  const totalSales = sales.reduce((sum, item) => sum + item.total, 0);
+
+  return (
+    <ScrollView style={styles.container}>
+
+      <Text style={styles.title}>SIMAMIA BIASHARA</Text>
+
+      <View style={styles.card}>
+        <Text>Mauzo ya Leo: {totalSales} TZS</Text>
+        <Text>Stoo: {stock.length} bidhaa</Text>
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.header}>Mauzo</Text>
+        <TextInput placeholder="Jina la bidhaa" value={product} onChangeText={setProduct} style={styles.input} />
+        <TextInput placeholder="Idadi" value={qty} onChangeText={setQty} keyboardType="numeric" style={styles.input} />
+        <TextInput placeholder="Bei" value={price} onChangeText={setPrice} keyboardType="numeric" style={styles.input} />
+        <Button title="Ongeza Mauzo" onPress={addSale} />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.header}>Stoo</Text>
+        <TextInput placeholder="Jina la bidhaa" value={stockName} onChangeText={setStockName} style={styles.input} />
+        <TextInput placeholder="Idadi" value={stockQty} onChangeText={setStockQty} keyboardType="numeric" style={styles.input} />
+        <Button title="Ongeza Stoo" onPress={addStock} />
+      </View>
+
+      <View style={styles.card}>
+        <Text style={styles.header}>Orodha ya Mauzo</Text>
+        {sales.map((item, index) => (
+          <Text key={index}>
+            {item.product} - {item.qty} x {item.price} = {item.total}
+          </Text>
+        ))}
+      </View>
+
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { padding: 15, marginTop: 30 },
+  title: { fontSize: 22, fontWeight: 'bold', textAlign: 'center', marginBottom: 10 },
+  card: { padding: 10, borderWidth: 1, marginBottom: 10, borderRadius: 8 },
+  header: { fontWeight: 'bold', marginBottom: 5 },
+  input: { borderWidth: 1, marginBottom: 5, padding: 8, borderRadius: 5 }
+});
